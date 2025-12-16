@@ -141,7 +141,7 @@ function build_edges(settings, rng, G, x, y)
     end
 
     gdf = DataFrame(fid=1:length(geoms), geometry=geoms)
-    metadata!(gdf, "geometrycolumns", (:geometry))
+    metadata!(gdf, "geometrycolumns", (:geometry,))
     return gdf
 end
 

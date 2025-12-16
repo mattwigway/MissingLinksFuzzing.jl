@@ -9,9 +9,11 @@ import StatsBase: sample
 import Logging: @debug
 import DataFrames: DataFrame, metadata!
 import GLMakie
-import Makie: Figure, lines!, scatter!, Observable, Figure, Axis, @lift, GridLayout, Button, on, Label
+import Makie: Figure, lines!, scatter!, Observable, Figure, Axis, @lift, GridLayout, Button, on, Label,
+    Slider, SliderGrid, colsize!, rowsize!, Fixed, Auto, Relative
 import ArgParse: ArgParseSettings, @add_arg_table!, parse_args
 import Random: rand
+import MissingLinks: graph_from_gdal, remove_tiny_islands, fill_distance_matrix!, identify_potential_missing_links, deduplicate_links, links_to_gis
 
 include("graph_construction.jl")
 include("ui.jl")
