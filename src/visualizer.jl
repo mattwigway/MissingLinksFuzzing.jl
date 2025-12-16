@@ -25,15 +25,45 @@ function visualizer()
     colsize!(fig.layout, 2, Fixed(300))
     rowsize!(fig.layout, 1, Relative(1))
 
+    # set up the ruler tool (h/t Google AI, but I wrote the code myself)
+    ruler_p1 = Observable{Union{Point2f, Nothing}}(nothing)
+    ruler_p2 = Observable{Union{Point2f, Nothing}}(nothing)
+
+    on(events(fig).mousebutton) do event
+        if event.button == Mouse.left && event.action == Mouse.press
+            if !isnothing(ruler_p1[]) && isnothing(ruler_p2[])
+                # finishing a measurement
+                ruler_p2[] = mouseposition(ax.scene)
+            else
+                # starting a new measurement
+                ruler_p1[] = mouseposition(ax.scene)
+                ruler_p2[] = nothing
+            end
+        end
+    end
+
     sg = SliderGrid(
         iface[1, 1],
         (label="Density (int/km²)", range=10:1:100, startvalue=50)
     )
 
-    seed = @lift("Seed: $($state.fuzzed_graph.settings.seed)")
-    Label(iface[2, 1], seed)
-    iface[3, 1] = nextbutton = Button(fig, label="Next graph")
+    distance = @lift(isnothing($ruler_p2) ? 0.0 : round(norm2($ruler_p1 - $ruler_p2), digits=1))
+    distreadout = @lift("Distance: $($distance)m")
+    Label(iface[2, 1], distreadout)
 
+    ruler_line = @lift(if isnothing($ruler_p1)
+        Point2f[]
+    elseif isnothing($ruler_p2)
+        [$ruler_p1]
+    else
+        [$ruler_p1, $ruler_p2]
+    end)
+    lines!(ax, ruler_line, color="pink")
+    scatter!(ax, ruler_line, color="pink")
+
+    seed = @lift("Seed: $($state.fuzzed_graph.settings.seed)")
+    Label(iface[3, 1], seed)
+    iface[4, 1] = nextbutton = Button(fig, label="Next graph")
 
     on(nextbutton.clicks) do _
         @debug("New state")
@@ -50,6 +80,7 @@ function next_state(settings=FuzzedGraphSettings())
     fuzzed = build_fuzzed_graph(settings)
 
     G = graph_from_gdal(fuzzed.edges)
+    G = remove_tiny_islands(G, 4)
 
     dmat = zeros(Float64, (nv(G), nv(G)))
     fill_distance_matrix!(G, dmat; maxdist=1000)
@@ -59,7 +90,7 @@ function next_state(settings=FuzzedGraphSettings())
 
     VisualizerState(
         fuzzed,
-        links_to_gis(G, all_links),
-        links_to_gis(G, links)
+        isempty(all_links) ? DataFrame(geometry=[]) : links_to_gis(G, all_links),
+        isempty(all_links) ? DataFrame(geometry=[]) : links_to_gis(G, links)
     )
 end
