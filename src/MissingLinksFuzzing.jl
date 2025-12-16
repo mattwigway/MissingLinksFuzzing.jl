@@ -8,9 +8,14 @@ import Graphs: Graph, complete_graph, prim_mst, dijkstra_shortest_paths, ne, rem
 import StatsBase: sample
 import Logging: @debug
 import DataFrames: DataFrame, metadata!
-import Plots
+import GLMakie
+import Makie: Figure, lines!, scatter!, Observable, Figure, Axis, @lift, GridLayout, Button, on, Label
+import ArgParse: ArgParseSettings, @add_arg_table!, parse_args
+import Random: rand
 
 include("graph_construction.jl")
+include("ui.jl")
+include("visualizer.jl")
 
 export FuzzedGraphSettings, build_fuzzed_graph
 end
