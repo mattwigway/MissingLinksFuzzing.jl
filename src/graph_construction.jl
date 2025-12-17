@@ -1,9 +1,9 @@
 @kwdef mutable struct FuzzedGraphSettings
-    width::Int64 = 5_000
-    height::Int64 = 5_000
+    width::Int64 = 6000
+    height::Int64 = 3500
 
     # density per square meter
-    intersection_density::Float64 = 1e-5
+    intersection_density::Float64 = 5e-5
 
     # connectivity factor: what proportion of nodes we build SPTs from with reweighted graph
     connectivity_factor::Float64 = 0.2
@@ -135,12 +135,16 @@ end
 
 function build_edges(settings, rng, G, x, y)
     geoms = AG.IGeometry{AG.wkbLineString}[]
+    sources = Int64[]
+    targets = Int64[]
 
     for edge in edges(G)
         push!(geoms, build_edge(settings, rng, x[edge.src], y[edge.src], x[edge.dst], y[edge.dst]))
+        push!(sources, edge.src)
+        push!(targets, edge.dst)
     end
 
-    gdf = DataFrame(fid=1:length(geoms), geometry=geoms)
+    gdf = DataFrame(fid=1:length(geoms), geometry=geoms, src=sources, dst=targets)
     metadata!(gdf, "geometrycolumns", (:geometry,))
     return gdf
 end

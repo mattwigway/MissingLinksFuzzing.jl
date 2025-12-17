@@ -28,6 +28,7 @@ function visualizer()
     # set up the ruler tool (h/t Google AI, but I wrote the code myself)
     ruler_p1 = Observable{Union{Point2f, Nothing}}(nothing)
     ruler_p2 = Observable{Union{Point2f, Nothing}}(nothing)
+    cursorpos = Observable(Point2f(0, 0))
 
     on(events(fig).mousebutton) do event
         if event.button == Mouse.left && event.action == Mouse.press
@@ -39,6 +40,8 @@ function visualizer()
                 ruler_p1[] = mouseposition(ax.scene)
                 ruler_p2[] = nothing
             end
+        else
+            cursorpos[] = mouseposition(ax.scene)
         end
     end
 
@@ -63,24 +66,32 @@ function visualizer()
 
     seed = @lift("Seed: $($state.fuzzed_graph.settings.seed)")
     Label(iface[3, 1], seed)
-    iface[4, 1] = nextbutton = Button(fig, label="Next graph")
+
+    seedbox = Textbox(iface[4, 1], placeholder = "Set seed...", width=290, validator = UInt64)
+
+    on(seedbox.stored_string) do s
+        state[] = next_state(FuzzedGraphSettings(intersection_density = sg.sliders[1].value[] / (1000^2)), parse(UInt64, s))
+    end
+
+    iface[5, 1] = nextbutton = Button(fig, label="Random graph")
 
     on(nextbutton.clicks) do _
-        @debug("New state")
+        @debug("New state with seed $(seedval[1])")
         state[] = next_state(FuzzedGraphSettings(intersection_density = sg.sliders[1].value[] / (1000^2)))
     end
+
+    poslabel = @lift("Coordinate: $($cursorpos)")
+    Label(iface[6, 1], poslabel)
 
     fig
 end
 
-function next_state(settings=FuzzedGraphSettings())
-    settings.seed = rand(UInt64)
-    settings.width = 6000
-    settings.height = 3500
+function next_state(settings=FuzzedGraphSettings(), seed=nothing)
+    settings.seed = isnothing(seed) ? rand(UInt64) : seed
     fuzzed = build_fuzzed_graph(settings)
 
     G = graph_from_gdal(fuzzed.edges)
-    G = remove_tiny_islands(G, 4)
+    #G = remove_tiny_islands(G, 4)
 
     dmat = zeros(Float64, (nv(G), nv(G)))
     fill_distance_matrix!(G, dmat; maxdist=1000)

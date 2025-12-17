@@ -1,0 +1,3 @@
+#!/bin/bash
+set -ex
+julia --project="$(dirname "$0")" -e "using MissingLinksFuzzing; MissingLinksFuzzing.ui()" -- $@
