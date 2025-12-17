@@ -9,10 +9,6 @@ since deduplication is a heuristic it is difficult to conclusively prove
 correctness.
 """
 function fuzz(G::FuzzedGraph, mlg, all_links, links, scores, oweights, dweights, logfile)
-    if !isnothing(logfile)
-        println(logfile, "seed,act_score,exp_score,difference,geom")
-    end
-
     # make a weight matrix accounting for the now squiggly roads
     weights = fill(Inf64, length(G.x), length(G.x))
     for row in eachrow(G.edges)
@@ -121,14 +117,44 @@ function fuzz(G::FuzzedGraph, mlg, all_links, links, scores, oweights, dweights,
         geom = links_to_gis(mlg, [link]).geometry[1]
 
         # write this out for later statistical analysis
-        if !isnothing(logfile)
-            println(logfile, "$(G.settings.seed),$score,$new_score,$(new_score - score),$(AG.toWKT(geom))")
-        end
+        # It is expected they will not all match perfectly; the algorithms differ in how they handle rounding.
+        # In the MissingLinks algorithm, rouding happens to multiple components individually - distance to the link,
+        # distance of the link, distance from the link to the destination. In the naive algorithm, nothing gets rounded
+        # until the eend (other than the offsets, see below).
 
-        # if the score from the algo was 0, they should be the same. if it wasn't,
-        # allow 5% variation for rounding - because the algorithm uses lengths rounded to meters, whereas
-        # the length of the link when realized is a float
-        if score ≠ new_score && (score > 0 && abs(new_score / score - 1) > 0.05)
+        # Note that it is expected that this will introduce a _very slight_ negative bias to the results. Julia
+        # uses round halves to evens (bankers rounding), so in general rounding does not introduce any systematic
+        # bias. However, in this case it results in the distances being (on average) marginally longer in the
+        # realized graph than as calculated by the MissingLinks algorithm. I say on average because this small
+        # bias is far smaller than the overall rounding error that could be positive or negative.
+
+        # Several things are getting rounded in the algorithm - the distance matrix values, the link offsets
+        # from the start and end of the link, and the length of the link itself. All of these use default rounding,
+        # so none of them are biased. However, consider a path from point A to B via link L. The MissingLinks algorithm
+        # calculates this as the distance from A to the end of the edge L connects to (it could be either end, it calculates
+        # which is shortest), the distance from the end of L to where L connects, the length of L itself, the distance from
+        # where L connect to the end of the other edge it is connected to, and the distance from the end of that edge to the
+        # destination. These are all rounded independently. For the most part, all of that rounding should cancel out on average,
+        # leading to unbiased results. There is one exception, however. When we round the offsets from the ends of the edges to L,
+        # we may make the distance to get to L further from or closer to the origin/destination, with no bias (and the
+        # algorithm ensures that the total of the offsets from each edge sum to the link length). However, rounding
+        # these offsets _does_ bias the length of L itself very slightly. Since L is always at the closest point between
+        # the edges, rounding the offsets will always make it longer, because moving in either direction moves away from the
+        # optimal point, introducing up to 1m in additional length (if the true offsets were both x.5, the links were colinear,
+        # and rounding moved the ends farther apart). The MissingLinks algorithm doesn't account for this; it treats the length
+        # of the link as the geographic distance at the shortest point, rounded. But when we realize the graph,
+        # the actual length from the rounded point is used. So the links in the realized graph are ever-so-slightly longer
+        # leading to longer distances and lower access on average. The magnitude of this bias is so tiny it falls several orders
+        # of magnitudes below many other sources of error in the algorithm, so really not worth worrying about - and in fact makes
+        # the result probably better, as the shortest point between two edges is unlikely to be a place you could exactly build
+        # a connection anyways. But it is statistically significant in large samples.
+        if !isnothing(logfile)
+            println(logfile, "$(G.settings.seed),$score,$new_score,$(new_score - score),\"$(AG.toWKT(geom))\"")
+        elseif score ≠ new_score && (score > 0 && abs(new_score / score - 1) > 0.05)
+            # if the score from the algo was 0, they should be the same. if it wasn't,
+            # allow 5% variation for rounding - because the algorithm uses lengths rounded to meters, whereas
+            # the length of the link when realized is a float. But if there's a logfile, don't spam the console;
+            # any concerns can be identified post-hoc
             link_gis = get_xy(geom)
             @warn "Link $(link_gis) has score $score from MissingLinks, expected $new_score; seed $(G.settings.seed)"
         end
@@ -204,6 +230,10 @@ function fuzzer(;settings=FuzzedGraphSettings(), seed=nothing, logfile=nothing, 
 end
 
 function _fuzzer(rng, settings, seed, logfile, once)
+    if !isnothing(logfile)
+        println(logfile, "seed,act_score,exp_score,difference,geom")
+    end
+
     progress = ProgressUnknown("Fuzzed graphs tested:")
 
     while true
@@ -300,8 +330,9 @@ polygons.
 """
 function get_weights(rng, fuzzed, G, poly)
     # We create a point at each vertex of the graph; it should get snapped
-    # to 
-    original = rand(rng, Float64, length(fuzzed.x))
+    # to all edges connecting to that vertex
+    # adding 1 so that weights can't be infinitesimal, we can easily see when something is wrong
+    original = rand(rng, Float64, length(fuzzed.x)) .+ 1
 
     # create the geodataframe (collect converts tuple to vector for AG)
     df = DataFrame(weight=original, geometry=map(AG.createpoint ∘ collect, zip(fuzzed.x, fuzzed.y)))
