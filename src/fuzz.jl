@@ -161,28 +161,44 @@ end
 function _fuzzer(rng, n, settings, seed, logfile)
     @showprogress for _ in 1:n
         settings.seed = seed 
-        fuzzed = build_fuzzed_graph(settings)
+        try
+            fuzzed = build_fuzzed_graph(settings)
 
-        local all_links, links, oweights, dweights, scores, f, G
+            local all_links, links, oweights_exp, dweights_exp, scores, G
 
-        with_logger(NullLogger()) do
-            G = graph_from_gdal(fuzzed.edges, max_edge_length=100_000)
-            #G = remove_tiny_islands(G, 4) # TODO test this
+            with_logger(NullLogger()) do
+                G = graph_from_gdal(fuzzed.edges, max_edge_length=100_000)
+                #G = remove_tiny_islands(G, 4) # TODO test this
 
-            dmat = zeros(Float64, (nv(G), nv(G)))
-            fill_distance_matrix!(G, dmat; maxdist=1000)
+                dmat = zeros(Float64, (nv(G), nv(G)))
+                fill_distance_matrix!(G, dmat; maxdist=1000)
 
-            all_links = identify_potential_missing_links(G, dmat, 100, 1000)
-            links = deduplicate_links(G, all_links, dmat, 100)
+                all_links = identify_potential_missing_links(G, dmat, 100, 1000)
+                links = deduplicate_links(G, all_links, dmat, 100)
 
-            oweights = rand(rng, Float64, nv(G))
-            dweights = rand(rng, Float64, nv(G))
+                oweights_exp, oweightsdf = get_weights(rng, fuzzed, G, false)
+                dweights_exp, dweightsdf = get_weights(rng, fuzzed, G, true)
 
-            scores = score_links(x -> x < 1000, G, links, dmat, oweights, dweights, 1000) 
+                # We de-construct and re-construct the weights
+                oweights_act = create_graph_weights(G, oweightsdf, [:weight], 1e-5)
+                dweights_act = create_graph_weights(G, dweightsdf, [:weight], 1e-5)
+
+                all(oweights_act .≈ oweights_exp) || @warn "Origin weights deviate from expected by up to $(max(abs(oweights_act .- oweights_exp))), seed $(seed)"
+                all(dweights_act .≈ dweights_exp) || @warn "Origin weights deviate from expected by up to $(max(abs(dweights_act .- dweights_exp))), seed $(seed)"
+
+                scores = score_links(x -> x < 1000, G, links, dmat, oweights_act, dweights_act, 1000) 
+            end
+
+
+            fuzz(fuzzed, G, all_links, links, scores, oweights_exp, dweights_exp, logfile)
+
+            if !isnothing(logfile)
+                flush(logfile)
+            end
+        
+        catch ex
+            @error "Error occurred with seed $seed" exception=(ex, catch_backtrace())
         end
-
-
-        fuzz(fuzzed, G, all_links, links, scores, oweights, dweights, logfile)
 
         # reset seed for next iteration
         seed = rand(rng, UInt64)
@@ -217,4 +233,75 @@ function get_link_xy(G, link)
     p2 = AG.pointalongline(e2.geom, link.to_dist_from_start)
 
     p1, p2
+end
+
+"""
+    get_weights(rng, fuzzed, G, poly)
+
+Get random weights for a fuzzed graph. Return the expected weights and a geodataframe
+that should produce them when run through the assignment procedure. If poly is true, return
+polygons.
+"""
+function get_weights(rng, fuzzed, G, poly)
+    # We create a point at each vertex of the graph; it should get snapped
+    # to 
+    original = rand(rng, Float64, length(fuzzed.x))
+
+    # create the geodataframe (collect converts tuple to vector for AG)
+    df = DataFrame(weight=original, geometry=map(AG.createpoint ∘ collect, zip(fuzzed.x, fuzzed.y)))
+
+    if poly
+        # make them polygons
+        df.geometry = AG.buffer.(df.geometry, 1e-2)
+    end
+
+    metadata!(df, "geometrycolumns", (:geometry,))
+
+    # now, based on the graph structure, figure out what the computed weights should be
+    # for each point in the dataframe, it will be divided among all edges connecting to the node
+    # (assuming there aren't other edges extremely close, but that's unlikely). Then those edges
+    # will be divided among the node and the neighbor, so half will go to this node, half evenly
+    # divided among neighbors.
+
+    # We do this first in fuzzed-graph space, then convert to MissingLinks-graph space
+
+    total_expected_weight = zero(Float64)
+    weights_fuzzed = zeros(Float64, length(fuzzed.x))
+    for (i, weight) in enumerate(original)
+        nbrs = neighbors(fuzzed.graph, i)
+
+        # nodes with no neighbors will not end up in the missing links graph and as such will
+        # have no weight
+        if !isempty(nbrs)
+            total_expected_weight += weight
+            weights_fuzzed[i] += weight / 2
+            for nbr in nbrs
+                weights_fuzzed[nbr] += weight / 2 / length(nbrs)
+            end
+        end
+    end
+
+    @assert sum(weights_fuzzed) ≈ total_expected_weight
+
+    # translate to missinglinks-graph space
+    weights_mlg = zeros(Float64, nv(G))
+    for i in 1:nv(G)
+        pos = G[label_for(G, i)]
+        found = false
+        for (j, x, y) in zip(1:length(fuzzed.x), fuzzed.x, fuzzed.y)
+            if norm2([x, y] .- pos) < 1e-5
+                found = true
+                @assert !isnan(weights_fuzzed[j])
+                weights_mlg[i] = weights_fuzzed[j]
+                # so we don't use it again
+                weights_fuzzed[j] = NaN64
+                break
+            end
+        end
+        @assert found
+    end
+
+    @assert sum(weights_mlg) ≈ total_expected_weight
+
+    return weights_mlg, df
 end
