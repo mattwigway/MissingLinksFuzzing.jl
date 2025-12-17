@@ -21,11 +21,13 @@ import MissingLinks: graph_from_gdal, remove_tiny_islands, fill_distance_matrix!
 import Tables: eachrow
 import LibGEOS
 import ProgressMeter: ProgressUnknown, next!
+import ProgressMeter
 
 include("graph_construction.jl")
 include("ui.jl")
 include("visualizer.jl")
 include("fuzz.jl")
+include("progressheadless.jl")
 
 export FuzzedGraphSettings, build_fuzzed_graph
 end

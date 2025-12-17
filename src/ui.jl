@@ -12,9 +12,12 @@ function ui(raw_args=ARGS)
             default = rand(UInt64)
             arg_type=UInt64
         "--log", "-l"
-            help = "CSV file to log score differences to, for later statistical analysis"
+            help = "CSV file to log score differences to, for later statistical analysis. If filename contains %i, will be replaced with initial seed."
             default=nothing
             arg_type = String
+        "--headless"
+            help = "Format output appropriately for a headless environment, using progress log messages instead of a progress bar"
+            action = "store_true"
     end
 
     args = parse_args(raw_args, s)
@@ -26,6 +29,6 @@ function ui(raw_args=ARGS)
             yield()
         end
     else
-        fuzzer(seed=args["seed"], logfile=args["log"], once=args["once"])
+        fuzzer(seed=args["seed"], logfile=args["log"], once=args["once"], headless=args["headless"])
     end
 end

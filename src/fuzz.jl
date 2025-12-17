@@ -154,7 +154,7 @@ function fuzz(G::FuzzedGraph, mlg, all_links, links, scores, oweights, dweights,
             # if the score from the algo was 0, they should be the same. if it wasn't,
             # allow 5% variation for rounding - because the algorithm uses lengths rounded to meters, whereas
             # the length of the link when realized is a float. But if there's a logfile, don't spam the console;
-            # any concerns can be identified post-hoc
+            # any concerns can be identified post-hoc.
             link_gis = get_xy(geom)
             @warn "Link $(link_gis) has score $score from MissingLinks, expected $new_score; seed $(G.settings.seed)"
         end
@@ -217,24 +217,26 @@ function fuzz(G::FuzzedGraph, mlg, all_links, links, scores, oweights, dweights,
     return(all_links)
 end
 
-function fuzzer(;settings=FuzzedGraphSettings(), seed=nothing, logfile=nothing, once=false)
+function fuzzer(;settings=FuzzedGraphSettings(), seed=nothing, logfile=nothing, once=false, headless=false)
     # if seed is specified, use it to seed the RNG, but also use it as the seed for the first fuzz so things can be reproduced
     rng = StableRNG(isnothing(seed) ? rand(UInt64) : seed)
     seed = isnothing(seed) ? rand(rng, UInt64) : seed
 
     if !isnothing(logfile)
-        open(f -> _fuzzer(rng, settings, seed, f, once), logfile, "w")
+        logfile = replace(logfile, "%i" => "$seed")
+        open(f -> _fuzzer(rng, settings, seed, f, once, headless), logfile, "w")
     else
-        _fuzzer(rng, settings, seed, nothing, once)
+        _fuzzer(rng, settings, seed, nothing, once, headless)
     end
 end
 
-function _fuzzer(rng, settings, seed, logfile, once)
+function _fuzzer(rng, settings, seed, logfile, once, headless)
     if !isnothing(logfile)
         println(logfile, "seed,act_score,exp_score,difference,geom")
     end
 
-    progress = ProgressUnknown("Fuzzed graphs tested:")
+    # in headless mode, don't use console progress bar
+    progress = headless ? ProgressUnknownHeadless(10, "Fuzzed graphs tested:") : ProgressUnknown("Fuzzed graphs tested:")
 
     while true
         settings.seed = seed
