@@ -40,9 +40,11 @@ function visualizer()
                 ruler_p1[] = mouseposition(ax.scene)
                 ruler_p2[] = nothing
             end
-        else
-            cursorpos[] = mouseposition(ax.scene)
         end
+    end
+
+    on(events(fig).mouseposition) do _
+        cursorpos[] = mouseposition(ax.scene)
     end
 
     sg = SliderGrid(
@@ -50,9 +52,22 @@ function visualizer()
         (label="Density (int/km²)", range=10:1:100, startvalue=50)
     )
 
+    iface[2, 1] = toggles = GridLayout()
+
+    cbox = Checkbox(toggles[1, 1], checked=false)
+    Label(toggles[1, 2], "Show edge lengths")
+
+    # find middle of line segment
+    lengths = @lift(AG.geomlength.($state.fuzzed_graph.edges.geometry))
+    labelpts = @lift(AG.pointalongline.($state.fuzzed_graph.edges.geometry, $lengths * 0.5))
+    labelx = @lift(AG.getx.($labelpts, 0))
+    labely = @lift(AG.gety.($labelpts, 0))
+    lenround = @lift($(cbox.checked) ? repr.(round.($lengths, digits=2)) : fill("", length($labelx)))
+    text!(ax, labelx, labely, text=lenround)
+
     distance = @lift(isnothing($ruler_p2) ? 0.0 : round(norm2($ruler_p1 - $ruler_p2), digits=1))
     distreadout = @lift("Distance: $($distance)m")
-    Label(iface[2, 1], distreadout)
+    Label(iface[3, 1], distreadout)
 
     ruler_line = @lift(if isnothing($ruler_p1)
         Point2f[]
@@ -65,23 +80,23 @@ function visualizer()
     scatter!(ax, ruler_line, color="pink")
 
     seed = @lift("Seed: $($state.fuzzed_graph.settings.seed)")
-    Label(iface[3, 1], seed)
+    Label(iface[4, 1], seed)
 
-    seedbox = Textbox(iface[4, 1], placeholder = "Set seed...", width=290, validator = UInt64)
+    seedbox = Textbox(iface[5, 1], placeholder = "Set seed...", width=290, validator = UInt64)
 
     on(seedbox.stored_string) do s
         state[] = next_state(FuzzedGraphSettings(intersection_density = sg.sliders[1].value[] / (1000^2)), parse(UInt64, s))
     end
 
-    iface[5, 1] = nextbutton = Button(fig, label="Random graph")
+    iface[6, 1] = nextbutton = Button(fig, label="Random graph")
 
     on(nextbutton.clicks) do _
         @debug("New state with seed $(seedval[1])")
         state[] = next_state(FuzzedGraphSettings(intersection_density = sg.sliders[1].value[] / (1000^2)))
     end
 
-    poslabel = @lift("Coordinate: $($cursorpos)")
-    Label(iface[6, 1], poslabel)
+    poslabel = @lift("Coordinate: $(round($cursorpos[1], digits=2)), $(round($cursorpos[2], digits=2))")
+    Label(iface[7, 1], poslabel)
 
     fig
 end
