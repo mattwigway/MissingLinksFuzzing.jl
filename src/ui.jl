@@ -12,6 +12,10 @@ function ui(raw_args=ARGS)
             help = "Seed the algorithm for reproducible runs"
             default = rand(UInt64)
             arg_type=UInt64
+        "--log", "-l"
+            help = "CSV file to log score differences to, for later statistical analysis"
+            default=nothing
+            arg_type = String
     end
 
     args = parse_args(raw_args, s)
@@ -23,6 +27,6 @@ function ui(raw_args=ARGS)
             yield()
         end
     else
-        fuzzer(args["count"]; seed=args["seed"])
+        fuzzer(args["count"]; seed=args["seed"], logfile=args["log"])
     end
 end

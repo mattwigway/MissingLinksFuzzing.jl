@@ -15,7 +15,7 @@ import Makie: Figure, lines!, scatter!, Observable, Figure, Axis, @lift, GridLay
 import ArgParse: ArgParseSettings, @add_arg_table!, parse_args
 import Random: rand
 import MissingLinks: graph_from_gdal, remove_tiny_islands, fill_distance_matrix!, identify_potential_missing_links, deduplicate_links,
-    links_to_gis, get_xy
+    links_to_gis, get_xy, score_links, realize_graph
 import Tables: eachrow
 import LibGEOS
 import ProgressMeter: @showprogress

@@ -8,7 +8,11 @@ Links should be the output of identify_missing_links, not deduplication;
 since deduplication is a heuristic it is difficult to conclusively prove
 correctness.
 """
-function fuzz(G::FuzzedGraph, mlg, links)
+function fuzz(G::FuzzedGraph, mlg, all_links, links, scores, oweights, dweights, logfile)
+    if !isnothing(logfile)
+        println(logfile, "seed,act_score,exp_score,difference,geom")
+    end
+
     # make a weight matrix accounting for the now squiggly roads
     weights = fill(Inf64, length(G.x), length(G.x))
     for row in eachrow(G.edges)
@@ -20,7 +24,7 @@ function fuzz(G::FuzzedGraph, mlg, links)
         dmat[:, src] = dijkstra_shortest_paths(G.graph, src, weights).dists
     end
     
-    found_links = BitVector(undef, length(links))
+    found_links = BitVector(undef, length(all_links))
     fill!(found_links, false)
 
     # now naively check every pair of edges to see if they should have a link, and if so if they do
@@ -54,7 +58,7 @@ function fuzz(G::FuzzedGraph, mlg, links)
 
                     # These should have a link (unless they were part of an island - todo)
                     # TODO no shared IDs here what to do
-                    for (i, link) in enumerate(links)
+                    for (i, link) in enumerate(all_links)
                         link_geom = map(pt -> round.(pt), get_xy(links_to_gis(mlg, [link]).geometry[1]))
 
                         if (
@@ -81,6 +85,9 @@ function fuzz(G::FuzzedGraph, mlg, links)
                     end
 
                     if !found_this_link
+                        # this can happen when links have multiple points at the same distance (most often when they cross
+                        # each other twice). If one of them got reversed in graph build the point found may be the same length but
+                        # different location.
                         @warn "Link from $pt_e1 @ $pos_e1 / $len_e1 to $pt_e2 @ $pos_e2 / $len_e2 with length $geog_dist (network $net_dist) not found, seed $(G.settings.seed)"
                     end
                 end
@@ -92,34 +99,122 @@ function fuzz(G::FuzzedGraph, mlg, links)
         @warn "$(sum(.!found_links)) / $(length(found_links)) found but not expected, seed $(G.settings.seed)"
     end
 
-    return(links)
+    # col vector x row vector -> square matrix for all combinations
+    odweights = reshape(oweights, (:, 1)) * reshape(dweights, (1, :))
+    base_score = naive_access(mlg, [], odweights)
+    for (link, score) in zip(links, scores)
+        new_score = naive_access(mlg, [link], odweights) - base_score
+        geom = links_to_gis(mlg, [link]).geometry[1]
+
+        # write this out for later statistical analysis
+        if !isnothing(logfile)
+            println(logfile, "$(G.settings.seed),$score,$new_score,$(new_score - score),$(AG.toWKT(geom))")
+        end
+
+        # if the score from the algo was 0, they should be the same. if it wasn't,
+        # allow 5% variation for rounding - because the algorithm uses lengths rounded to meters, whereas
+        # the length of the link when realized is a float
+        if score ≠ new_score && (score > 0 && abs(new_score / score - 1) > 0.05)
+            link_gis = get_xy(geom)
+            @warn "Link $(link_gis) has score $score from MissingLinks, expected $new_score; seed $(G.settings.seed)"
+        end
+    end
+
+    # check the deduplication - every link found should have a link within 100 meters at both ends
+    # this is a loose bound as it's using crow-flies not net distance
+    link_xys = get_link_xy.(Ref(mlg), links)
+    for link in all_links
+        fr, to = get_link_xy(mlg, link)
+
+        found = false
+
+        for (fr2, to2) in link_xys
+            if (AG.distance(fr, fr2) < 101 && AG.distance(to, to2) < 101) ||
+                    # deduplication gets rid of opp-dir links as well
+                    (AG.distance(to, fr2) < 101 && AG.distance(fr, to2) < 101)
+                found = true
+                break
+            end
+        end
+
+        if !found
+            @warn "Link from $fr to $to with length $(link.geographic_length_m) (network $(link.network_length_m)) removed in deduplication but no substitute found, seed $(G.settings.seed)"
+        end
+
+    end
+
+    return(all_links)
 end
 
-function fuzzer(n; settings=FuzzedGraphSettings(), seed=nothing)
+function fuzzer(n; settings=FuzzedGraphSettings(), seed=nothing, logfile=nothing)
     # if seed is specified, use it to seed the RNG, but also use it as the seed for the first fuzz so things can be reproduced
     rng = StableRNG(isnothing(seed) ? rand(UInt64) : seed)
     seed = isnothing(seed) ? rand(rng, UInt64) : seed
-    f = nothing
-    G = nothing
+
+    if !isnothing(logfile)
+        open(f -> _fuzzer(rng, n, settings, seed, f), logfile, "w")
+    else
+        _fuzzer(rng, n, settings, seed, nothing)
+    end
+end
+
+function _fuzzer(rng, n, settings, seed, logfile)
     @showprogress for _ in 1:n
         settings.seed = seed 
         fuzzed = build_fuzzed_graph(settings)
 
-        all_links = with_logger(NullLogger()) do
+        local all_links, links, oweights, dweights, scores, f, G
+
+        with_logger(NullLogger()) do
             G = graph_from_gdal(fuzzed.edges, max_edge_length=100_000)
             #G = remove_tiny_islands(G, 4) # TODO test this
 
             dmat = zeros(Float64, (nv(G), nv(G)))
             fill_distance_matrix!(G, dmat; maxdist=1000)
 
-            identify_potential_missing_links(G, dmat, 100, 1000)
+            all_links = identify_potential_missing_links(G, dmat, 100, 1000)
+            links = deduplicate_links(G, all_links, dmat, 100)
+
+            oweights = rand(rng, Float64, nv(G))
+            dweights = rand(rng, Float64, nv(G))
+
+            scores = score_links(x -> x < 1000, G, links, dmat, oweights, dweights, 1000) 
         end
 
-        f = fuzz(fuzzed, G, all_links)
+
+        fuzz(fuzzed, G, all_links, links, scores, oweights, dweights, logfile)
 
         # reset seed for next iteration
         seed = rand(rng, UInt64)
     end
+end
 
-    return (links=f, G=G)
+# build a distance matrix
+function build_uint16_dmat(G)
+    result = Matrix{UInt16}(undef, nv(G), nv(G))
+
+    for src in 1:nv(G)
+        result[:, src] = round.(UInt16, min.(dijkstra_shortest_paths(G, src).dists, typemax(UInt16)))
+    end
+
+    return result
+end
+
+function naive_access(G, links, odweights)
+    # splice the link into the graph and recalculate the distance matrix
+    Gnew = isempty(links) ? G : realize_graph(G, links)
+    # any newly-added vertices don't matter and will have weight 0.
+    dmat = build_uint16_dmat(Gnew)[1:size(odweights, 1), 1:size(odweights, 2)]
+    # filter based on distance
+    sum(odweights .* (dmat .< 1000))
+end
+
+function get_link_xy(G, link)
+    e1 = G[link.fr_edge_src, link.fr_edge_tgt]
+    p1 = AG.pointalongline(e1.geom, link.fr_dist_from_start)
+
+    e2 = G[link.to_edge_src, link.to_edge_tgt]
+    p2 = AG.pointalongline(e2.geom, link.to_dist_from_start)
+
+    p1, p2
 end
