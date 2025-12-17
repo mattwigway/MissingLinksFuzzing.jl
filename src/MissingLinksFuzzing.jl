@@ -20,7 +20,7 @@ import MissingLinks: graph_from_gdal, remove_tiny_islands, fill_distance_matrix!
     links_to_gis, get_xy, score_links, realize_graph, create_graph_weights
 import Tables: eachrow
 import LibGEOS
-import ProgressMeter: @showprogress
+import ProgressMeter: ProgressUnknown, next!
 
 include("graph_construction.jl")
 include("ui.jl")

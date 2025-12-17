@@ -27,6 +27,11 @@ function fuzz(G::FuzzedGraph, mlg, all_links, links, scores, oweights, dweights,
     found_links = BitVector(undef, length(all_links))
     fill!(found_links, false)
 
+    # if two edges cross more than once, which location gets the link is undefined behavior.
+    # this is unusual and even more so in the real world, so we just punt here, but in those rare
+    # cases we expect to not find those edges (e.g. seed 7122159617084383647)
+    expected_not_found = 0
+
     # now naively check every pair of edges to see if they should have a link, and if so if they do
     for e1 in eachrow(G.edges)
         for e2 in eachrow(G.edges)
@@ -55,6 +60,15 @@ function fuzz(G::FuzzedGraph, mlg, all_links, links, scores, oweights, dweights,
                 # because distances all get rounded inside the missinglinks tool.
                 if round(UInt16, min(net_dist, typemax(UInt16))) > MIN_NET_DIST
                     found_this_link = false
+
+                    # if these two lines cross more than once, all bets are off - depending on whether any geometries got reversed,
+                    # we might find a different one, and which one we find is undefined behavior. This is rare, so just punt in
+                    # this case.
+                    # seed 7122159617084383647 demonstrates this at (1523 456)
+                    if geog_dist ≈ 0.0 && AG.ngeom(AG.intersection(e1.geometry, e2.geometry)) > 1
+                        expected_not_found += 1 # not + 2, this link should exist in both directions but we will also find it in both directions here
+                        continue
+                    end
 
                     # These should have a link (unless they were part of an island - todo)
                     # TODO no shared IDs here what to do
@@ -95,7 +109,7 @@ function fuzz(G::FuzzedGraph, mlg, all_links, links, scores, oweights, dweights,
         end
     end
 
-    if !all(found_links)
+    if sum(.!found_links) ≠ expected_not_found
         @warn "$(sum(.!found_links)) / $(length(found_links)) found but not expected, seed $(G.settings.seed)"
     end
 
@@ -120,47 +134,80 @@ function fuzz(G::FuzzedGraph, mlg, all_links, links, scores, oweights, dweights,
         end
     end
 
-    # check the deduplication - every link found should have a link within 100 meters at both ends
-    # this is a loose bound as it's using crow-flies not net distance
-    link_xys = get_link_xy.(Ref(mlg), links)
-    for link in all_links
-        fr, to = get_link_xy(mlg, link)
+    # new approach to checking deduplication - realize graph with all links and with deduplicated links
+    # create distance matrices for both. no trip should be longer due to deduplication by more than
+    # 400 * number of links used in the original. Why 400? Each sphere of influence has a radius of
+    # 100m around each end of the link that defined it, and then the shortest link is selected. If the
+    # link in the shortest path was 100m in one direction from both ends of the defining link, and the
+    # retained link 100m in the other direction, each end moves 200m. The link itself has to be shorter, but
+    # maybe not by much (in the case of two parallel streets, could be by millimeters)
 
-        found = false
+    # silence warnings about duplicate links, this is expected
+    Gall = with_logger(() -> realize_graph(mlg, all_links), NullLogger())
 
-        for (fr2, to2) in link_xys
-            if (AG.distance(fr, fr2) < 101 && AG.distance(to, to2) < 101) ||
-                    # deduplication gets rid of opp-dir links as well
-                    (AG.distance(to, fr2) < 101 && AG.distance(fr, to2) < 101)
-                found = true
-                break
+    # _not_ nv(Gall) - realize_graph adds vertices at the end and we don't care what's going on with
+    # added vertices
+    dmatall = Matrix{Float64}(undef, nv(mlg), nv(mlg))
+    nlinksused = zeros(Int64, nv(mlg), nv(mlg))
+    for src in 1:nv(mlg)
+        spt = dijkstra_shortest_paths(Gall, src)
+        dmatall[:, src] = spt.dists[1:nv(mlg)]
+
+        for dst in 1:nv(mlg)
+            if isfinite(spt.dists[dst])
+                node = dst
+                while node != src
+                    parent = spt.parents[node]
+                    ltype = Gall[label_for(Gall, parent), label_for(Gall, node)].link_type
+                    if !ismissing(ltype) && ltype == "candidate"
+                        nlinksused[src, dst] += 1
+                    end
+                    node = parent
+                end
             end
         end
-
-        if !found
-            @warn "Link from $fr to $to with length $(link.geographic_length_m) (network $(link.network_length_m)) removed in deduplication but no substitute found, seed $(G.settings.seed)"
-        end
-
     end
+
+    Gdedupe = with_logger(() -> realize_graph(mlg, links), NullLogger())
+    dmatdedupe = Matrix{Float64}(undef, nv(mlg), nv(mlg))
+    for src in 1:nv(mlg)
+        spt = dijkstra_shortest_paths(Gdedupe, src)
+        dmatdedupe[:, src] = spt.dists[1:nv(mlg)]
+    end
+
+    # dedupe should make all trips the same or longer
+    Δdmat = dmatdedupe .- dmatall
+    # things that are unreachable should stay unreachable (since we don't have a distance limit)
+    @assert all(isfinite.(dmatdedupe) .== isfinite.(dmatall))
+    # get rid of NaNs (inf - inf == NaN)
+    Δdmat[.!isfinite.(dmatdedupe)] .= 0.0
+    all(Δdmat .> -1e-6) || @error "Dedupe dmat should always be same or larger than full dmat, but got values $(Δdmat[Δdmat .<= -1e-6]), seed $(G.settings.seed)"
+    dedupe_problems = Δdmat .> nlinksused .* 400 .+ 1e-6
+
+    dedupe_deets = DataFrame(full=reshape(dmatall[dedupe_problems], :), dedupe=reshape(dmatdedupe[dedupe_problems], :), n_links_used=reshape(nlinksused[dedupe_problems], :))
+
+    !any(dedupe_problems) || @warn "deduplication caused $(sum(dedupe_problems)) paths to get too much longer, seed $(G.settings.seed)" dedupe_deets
 
     return(all_links)
 end
 
-function fuzzer(n; settings=FuzzedGraphSettings(), seed=nothing, logfile=nothing)
+function fuzzer(;settings=FuzzedGraphSettings(), seed=nothing, logfile=nothing, once=false)
     # if seed is specified, use it to seed the RNG, but also use it as the seed for the first fuzz so things can be reproduced
     rng = StableRNG(isnothing(seed) ? rand(UInt64) : seed)
     seed = isnothing(seed) ? rand(rng, UInt64) : seed
 
     if !isnothing(logfile)
-        open(f -> _fuzzer(rng, n, settings, seed, f), logfile, "w")
+        open(f -> _fuzzer(rng, settings, seed, f, once), logfile, "w")
     else
-        _fuzzer(rng, n, settings, seed, nothing)
+        _fuzzer(rng, settings, seed, nothing, once)
     end
 end
 
-function _fuzzer(rng, n, settings, seed, logfile)
-    @showprogress for _ in 1:n
-        settings.seed = seed 
+function _fuzzer(rng, settings, seed, logfile, once)
+    progress = ProgressUnknown("Fuzzed graphs tested:")
+
+    while true
+        settings.seed = seed
         try
             fuzzed = build_fuzzed_graph(settings)
 
@@ -197,11 +244,20 @@ function _fuzzer(rng, n, settings, seed, logfile)
             end
         
         catch ex
-            @error "Error occurred with seed $seed" exception=(ex, catch_backtrace())
+            if ex isa InterruptException
+                rethrow(e) # exit
+            else
+                @error "Error occurred with seed $seed" exception=(ex, catch_backtrace())
+            end
+        end
+
+        if once
+            break
         end
 
         # reset seed for next iteration
         seed = rand(rng, UInt64)
+        next!(progress)
     end
 end
 

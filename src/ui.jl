@@ -4,10 +4,9 @@ function ui(raw_args=ARGS)
         "--interactive", "-i"
             help = "Start the interactive visualizer"
             action = "store_true"
-        "--count", "-c"
-            help = "Number of times to fuzz the algorithms"
-            default = 100
-            arg_type = Int64
+        "--once", "-o"
+            help = "Run once (useful to re-check a problematic seed)"
+            action = "store_true"
         "--seed", "-s"
             help = "Seed the algorithm for reproducible runs"
             default = rand(UInt64)
@@ -27,6 +26,6 @@ function ui(raw_args=ARGS)
             yield()
         end
     else
-        fuzzer(args["count"]; seed=args["seed"], logfile=args["log"])
+        fuzzer(seed=args["seed"], logfile=args["log"], once=args["once"])
     end
 end
