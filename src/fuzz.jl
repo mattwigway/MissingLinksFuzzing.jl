@@ -172,7 +172,10 @@ function fuzz(G::FuzzedGraph, mlg, all_links, links, scores, oweights, dweights,
         # the edges, rounding the offsets will always make it longer, because moving in either direction moves away from the
         # optimal point, introducing up to 1m in additional length (if the true offsets were both x.5, the links were colinear,
         # and rounding moved the ends farther apart). The MissingLinks algorithm doesn't account for this; it treats the length
-        # of the link as the geographic distance at the shortest point, rounded. But when we realize the graph,
+        # of the link as the geographic distance at the shortest point, rounded. 
+        
+        # TODO this is not correct, but the bias might be due to duplicate links.
+        # But when we realize the graph,
         # the actual length from the rounded point is used. So the links in the realized graph are ever-so-slightly longer
         # leading to longer distances and lower access on average. The magnitude of this bias is so tiny it falls several orders
         # of magnitudes below many other sources of error in the algorithm, so really not worth worrying about - and in fact makes
@@ -238,9 +241,15 @@ function fuzz(G::FuzzedGraph, mlg, all_links, links, scores, oweights, dweights,
     # get rid of NaNs (inf - inf == NaN)
     Δdmat[.!isfinite.(dmatdedupe)] .= 0.0
 
-    if !all(Δdmat .> -1e-6)
+    # 1m buffer because in e.g. 6165926273020472680 there is
+    # a link that is basically exactly 10.5 m long. depending on which edge it snaps
+    # to that rounds to either 10 or 11. When realizing the graph, it uses the length
+    # from the first link it encounters, and discards the other, leading to a slight rounding
+    # error where the undeduplicated graph has the 11m link and the deduplicated one has the 10m
+    # link.
+    if !all(Δdmat .> -1 - 1e-6)
         # figure out which trips are affected
-        affected_trips = findall(Δdmat .≤ -1e-6)
+        affected_trips = findall(Δdmat .≤ -1 - 1e-6)
         affected_df = DataFrame(
             from=map(x -> Gdedupe[label_for(Gdedupe, x[1])], affected_trips),
             to=map(x -> Gdedupe[label_for(Gdedupe, x[2])], affected_trips),
