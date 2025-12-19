@@ -106,7 +106,7 @@ function fuzz(G::FuzzedGraph, mlg, all_links, links, scores, oweights, dweights,
     end
 
     if sum(.!found_links) ≠ expected_not_found
-        @warn "$(sum(.!found_links)) / $(length(found_links)) found but not expected, seed $(G.settings.seed)"
+        @warn "$(sum(.!found_links) - expected_not_found) / $(length(found_links)) found but not expected, seed $(G.settings.seed):" get_xy.(links_to_gis(mlg, all_links[.!found_links]).geometry)
     end
 
     # col vector x row vector -> square matrix for all combinations
@@ -217,22 +217,27 @@ function fuzz(G::FuzzedGraph, mlg, all_links, links, scores, oweights, dweights,
     return(all_links)
 end
 
-function fuzzer(;settings=FuzzedGraphSettings(), seed=nothing, logfile=nothing, once=false, headless=false)
+function fuzzer(;settings=FuzzedGraphSettings(), seed=nothing, logfile=nothing, csvfile=nothing, once=false, headless=false)
     # if seed is specified, use it to seed the RNG, but also use it as the seed for the first fuzz so things can be reproduced
     rng = StableRNG(isnothing(seed) ? rand(UInt64) : seed)
     seed = isnothing(seed) ? rand(rng, UInt64) : seed
 
-    if !isnothing(logfile)
+    if !isnothing(logfile) && logfile != ""
         logfile = replace(logfile, "%i" => "$seed")
-        open(f -> _fuzzer(rng, settings, seed, f, once, headless), logfile, "w")
+        Base.global_logger(MinLevelLogger(TeeLogger(ConsoleLogger(), FileLogger(logfile)), Info))
+    end
+
+    if !isnothing(csvfile) && csvfile != ""
+        csvfile = replace(csvfile, "%i" => "$seed")
+        open(f -> _fuzzer(rng, settings, seed, f, once, headless), csvfile, "w")
     else
         _fuzzer(rng, settings, seed, nothing, once, headless)
     end
 end
 
-function _fuzzer(rng, settings, seed, logfile, once, headless)
-    if !isnothing(logfile)
-        println(logfile, "seed,act_score,exp_score,difference,geom")
+function _fuzzer(rng, settings, seed, csvfile, once, headless)
+    if !isnothing(csvfile)
+        println(csvfile, "seed,act_score,exp_score,difference,geom")
     end
 
     # in headless mode, don't use console progress bar
@@ -269,10 +274,10 @@ function _fuzzer(rng, settings, seed, logfile, once, headless)
             end
 
 
-            fuzz(fuzzed, G, all_links, links, scores, oweights_exp, dweights_exp, logfile)
+            fuzz(fuzzed, G, all_links, links, scores, oweights_exp, dweights_exp, csvfile)
 
-            if !isnothing(logfile)
-                flush(logfile)
+            if !isnothing(csvfile)
+                flush(csvfile)
             end
         
         catch ex
