@@ -237,7 +237,18 @@ function fuzz(G::FuzzedGraph, mlg, all_links, links, scores, oweights, dweights,
     @assert all(isfinite.(dmatdedupe) .== isfinite.(dmatall))
     # get rid of NaNs (inf - inf == NaN)
     Δdmat[.!isfinite.(dmatdedupe)] .= 0.0
-    all(Δdmat .> -1e-6) || @error "Dedupe dmat should always be same or larger than full dmat, but got values $(Δdmat[Δdmat .<= -1e-6]), seed $(G.settings.seed)"
+
+    if !all(Δdmat .> -1e-6)
+        # figure out which trips are affected
+        affected_trips = findall(Δdmat .≤ -1e-6)
+        affected_df = DataFrame(
+            from=map(x -> Gdedupe[label_for(Gdedupe, x[1])], affected_trips),
+            to=map(x -> Gdedupe[label_for(Gdedupe, x[2])], affected_trips),
+            difference=Δdmat[affected_trips]
+        )
+        @error "Dedupe dmat should always be same or larger than full dmat, seed $(G.settings.seed)" affected_df
+    end
+
     dedupe_problems = Δdmat .> nlinksused .* 400 .+ 1e-6
 
     dedupe_deets = DataFrame(full=reshape(dmatall[dedupe_problems], :), dedupe=reshape(dmatdedupe[dedupe_problems], :), n_links_used=reshape(nlinksused[dedupe_problems], :))
