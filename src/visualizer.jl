@@ -1,5 +1,8 @@
 struct VisualizerState
     fuzzed_graph::FuzzedGraph
+    mlgraph::Any
+    mlall_links::Any
+    mllinks::Any
     all_links::DataFrame
     links::DataFrame
 end
@@ -13,15 +16,6 @@ function visualizer()
 
     fig = Figure()
     ax = Axis(fig[1, 1], aspect=@lift($state.fuzzed_graph.settings.width / $state.fuzzed_graph.settings.height))
-
-    lines!(ax, @lift($state.fuzzed_graph.edges.geometry), color="black")
-    scatter!(ax, @lift($state.fuzzed_graph.x), @lift($state.fuzzed_graph.y))
-
-    # add all links in gray
-    lines!(ax, @lift($state.all_links.geometry), color="gray")
-
-    # and chosen in red
-    lines!(ax, @lift($state.links.geometry), color="red")
 
     # set up the button
     fig[1, 2] = iface = GridLayout()
@@ -38,8 +32,6 @@ function visualizer()
 
     on(events(fig).mousebutton) do event
         if event.button == Mouse.left && event.action == Mouse.press
-            io = IOBuffer()
-
             if (Keyboard.left_shift == events(fig).keyboardbutton[].key || Keyboard.right_shift == events(fig).keyboardbutton[].key) &&
                     events(fig).keyboardbutton[].action == Keyboard.press
                 # link identification
@@ -67,8 +59,10 @@ function visualizer()
                     end
                 end
 
+                # print them all to console
+                println(join(linkinfos[sortperm(linkdists)], "\n"))
                 linkinfo[] = join(linkinfos[sortperm(linkdists)][1:min(2, length(linkinfos))], "\n")
-            else
+            elseif is_mouseinside(ax.scene)
                 # distance measurement
                 if !isnothing(ruler_p1[]) && isnothing(ruler_p2[])
                     # finishing a measurement
@@ -98,9 +92,46 @@ function visualizer()
     cbox = Checkbox(toggles[1, 1], checked=false)
     Label(toggles[1, 2], "Show edge lengths")
 
+    Label(iface[3, 1], "Select graph")
+    iface[4, 1] = graphsel = GridLayout()
+
+    edges = Observable(state[].fuzzed_graph.edges.geometry)
+    nodes = Observable((x=state[].fuzzed_graph.x, y=state[].fuzzed_graph.y))
+
+    graphsel[1, 1] = origbutton = Button(fig, label="Original")
+    on(origbutton.clicks) do _
+        edges[] = state[].fuzzed_graph.edges.geometry
+        nodes[] = (x=state[].fuzzed_graph.x, y=state[].fuzzed_graph.y)
+    end
+
+    graphsel[1, 2] = allbutton = Button(fig, label="All")
+    on(allbutton.clicks) do _
+        R = realize_graph(state[].mlgraph, state[].mlall_links)
+        edges[] = map(l -> AG.flattento2d!(R[l...].geom), edge_labels(R))
+        nodes[] = (x = map(n -> R[n][1], labels(R)), y = map(n -> R[n][2], labels(R)))
+    end
+
+    graphsel[1, 3] = allbutton = Button(fig, label="Dedupe")
+    on(allbutton.clicks) do _
+        R = realize_graph(state[].mlgraph, state[].mllinks)
+        edges[] = map(l -> AG.flattento2d!(R[l...].geom), edge_labels(R))
+        nodes[] = (x = map(n -> R[n][1], labels(R)), y = map(n -> R[n][2], labels(R)))
+    end
+
+    lines!(ax, edges, color="black")
+
+    # add all links in gray
+    lines!(ax, @lift($state.all_links.geometry), color="gray")
+
+    # and chosen in red
+    lines!(ax, @lift($state.links.geometry), color="red")
+
+    # and nodes
+    scatter!(ax, @lift($nodes.x), @lift($nodes.y))
+
     # find middle of line segment
-    lengths = @lift(AG.geomlength.($state.fuzzed_graph.edges.geometry))
-    labelpts = @lift(AG.pointalongline.($state.fuzzed_graph.edges.geometry, $lengths * 0.5))
+    lengths = @lift(AG.geomlength.($edges))
+    labelpts = @lift(AG.pointalongline.($edges, $lengths .* 0.5 .+ rand(length($lengths)) .* 0.05))
     labelx = @lift(AG.getx.($labelpts, 0))
     labely = @lift(AG.gety.($labelpts, 0))
     lenround = @lift($(cbox.checked) ? repr.(round.($lengths, digits=2)) : fill("", length($labelx)))
@@ -108,7 +139,7 @@ function visualizer()
 
     distance = @lift(isnothing($ruler_p2) ? 0.0 : round(norm2($ruler_p1 - $ruler_p2), digits=1))
     distreadout = @lift("Distance: $($distance)m")
-    Label(iface[3, 1], distreadout)
+    Label(iface[5, 1], distreadout)
 
     ruler_line = @lift(if isnothing($ruler_p1)
         Point2f[]
@@ -121,29 +152,31 @@ function visualizer()
     scatter!(ax, ruler_line, color="pink")
 
     seed = @lift("Seed: $($state.fuzzed_graph.settings.seed)")
-    Label(iface[4, 1], seed)
+    Label(iface[6, 1], seed)
 
-    seedbox = Textbox(iface[5, 1], placeholder = "Set seed...", width=290, validator = UInt64)
+    seedbox = Textbox(iface[7, 1], placeholder = "Set seed...", width=290, validator = UInt64)
 
     on(seedbox.stored_string) do s
         linkinfo[] = ""
         state[] = next_state(FuzzedGraphSettings(intersection_density = sg.sliders[1].value[] / (1000^2)), parse(UInt64, s))
     end
 
-    iface[6, 1] = nextbutton = Button(fig, label="Random graph")
+    iface[8, 1] = nextbutton = Button(fig, label="Random graph")
 
     on(nextbutton.clicks) do _
         @debug("New state with seed $(seedval[1])")
         linkinfo[] = ""
         state[] = next_state(FuzzedGraphSettings(intersection_density = sg.sliders[1].value[] / (1000^2)))
+        edges[] = state[].fuzzed_graph.edges.geometry
+        nodes[] = (x=state[].fuzzed_graph.x, y=state[].fuzzed_graph.y)
     end
 
     poslabel = @lift("Coordinate: $(round($cursorpos[1], digits=2)), $(round($cursorpos[2], digits=2))")
-    Label(iface[7, 1], poslabel)
+    Label(iface[9, 1], poslabel)
 
-    Label(iface[8, 1], linkinfo, justification=:left)
+    Label(iface[10, 1], linkinfo, justification=:left)
 
-    Label(iface[10, 1], """
+    Label(iface[12, 1], """
         Usage
         Click two points to measure
         Shift-click to see link info for links within 10m
@@ -164,7 +197,7 @@ function next_state(settings=FuzzedGraphSettings(), seed=nothing)
     settings.seed = isnothing(seed) ? rand(UInt64) : seed
     fuzzed = build_fuzzed_graph(settings)
 
-    G = graph_from_gdal(fuzzed.edges)
+    G = graph_from_gdal(fuzzed.edges, max_edge_length=100_000)
     #G = remove_tiny_islands(G, 4)
 
     dmat = zeros(Float64, (nv(G), nv(G)))
@@ -175,6 +208,9 @@ function next_state(settings=FuzzedGraphSettings(), seed=nothing)
 
     VisualizerState(
         fuzzed,
+        G,
+        all_links,
+        links,
         isempty(all_links) ? DataFrame(geometry=[]) : links_to_gis(G, all_links,
             :fr_dist_from_start => map(l -> l.fr_dist_from_start, all_links),
             :fr_dist_to_end => map(l -> l.fr_dist_to_end, all_links),

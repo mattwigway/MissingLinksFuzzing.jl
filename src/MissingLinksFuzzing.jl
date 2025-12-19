@@ -6,7 +6,7 @@ import Distributions: Normal, Uniform, truncated
 import LinearAlgebra: norm2
 import Graphs: Graph, complete_graph, prim_mst, dijkstra_shortest_paths, ne, rem_edge!, edges, nv, connected_components,
     neighbors
-import MetaGraphsNext: label_for
+import MetaGraphsNext: label_for, edge_labels, labels
 import StatsBase: sample
 import Logging: @debug, @warn, NullLogger, ConsoleLogger, with_logger, Info
 import LoggingExtras: TeeLogger, FileLogger, MinLevelLogger
