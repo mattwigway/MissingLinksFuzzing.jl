@@ -5,6 +5,10 @@ struct VisualizerState
 end
 
 function visualizer()
+    # we do this here to avoid loading the OpenGL ecosystem and opening a Makie window
+    # when running the fuzzer
+    @eval import GLMakie
+
     state = Observable(next_state())
 
     fig = Figure()
@@ -98,7 +102,15 @@ function visualizer()
     poslabel = @lift("Coordinate: $(round($cursorpos[1], digits=2)), $(round($cursorpos[2], digits=2))")
     Label(iface[7, 1], poslabel)
 
-    fig
+    # because display() uses GLMakie, and we loaded GLMakie at runtime with eval() so that it is only
+    # loaded if the interactive visualizer is requested, we need to use invokelatest so that it is
+    # available to render the display.
+    Base.invokelatest(display, fig)
+
+    while true
+        sleep(0.1)
+        yield()
+    end
 end
 
 function next_state(settings=FuzzedGraphSettings(), seed=nothing)

@@ -12,6 +12,10 @@ function ui(raw_args=ARGS)
             default = rand(UInt64)
             arg_type=UInt64
         "--log", "-l"
+            help = "Logfile. If filename contains %i, will be replaced with initial seed."
+            default=nothing
+            arg_type = String
+        "--csv", "-c"
             help = "CSV file to log score differences to, for later statistical analysis. If filename contains %i, will be replaced with initial seed."
             default=nothing
             arg_type = String
@@ -23,12 +27,8 @@ function ui(raw_args=ARGS)
     args = parse_args(raw_args, s)
 
     if args["interactive"]
-        display(visualizer())
-        while true
-            sleep(0.1)
-            yield()
-        end
+        visualizer()
     else
-        fuzzer(seed=args["seed"], logfile=args["log"], once=args["once"], headless=args["headless"])
+        fuzzer(seed=args["seed"], logfile=args["log"], csvfile=args["csv"], once=args["once"], headless=args["headless"])
     end
 end

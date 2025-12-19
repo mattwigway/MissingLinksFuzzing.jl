@@ -8,12 +8,9 @@ import Graphs: Graph, complete_graph, prim_mst, dijkstra_shortest_paths, ne, rem
     neighbors
 import MetaGraphsNext: label_for
 import StatsBase: sample
-import Logging: @debug, @warn, NullLogger, with_logger
+import Logging: @debug, @warn, NullLogger, ConsoleLogger, with_logger, Info
+import LoggingExtras: TeeLogger, FileLogger, MinLevelLogger
 import DataFrames: DataFrame, metadata!, nrow
-import GLMakie
-import Makie: Figure, lines!, scatter!, Observable, Figure, Axis, @lift, GridLayout, Button, on, Label,
-    Slider, SliderGrid, colsize!, rowsize!, Fixed, Auto, Relative, events, Mouse, mouseposition, Point2f, limits!,
-    Textbox, text!, Checkbox
 import ArgParse: ArgParseSettings, @add_arg_table!, parse_args
 import Random: rand
 import MissingLinks: graph_from_gdal, remove_tiny_islands, fill_distance_matrix!, identify_potential_missing_links, deduplicate_links,
@@ -22,6 +19,9 @@ import Tables: eachrow
 import LibGEOS
 import ProgressMeter: ProgressUnknown, next!
 import ProgressMeter
+import Makie: Figure, lines!, scatter!, Observable, Figure, Axis, @lift, GridLayout, Button, on, Label,
+        Slider, SliderGrid, colsize!, rowsize!, Fixed, Auto, Relative, events, Mouse, mouseposition, Point2f, limits!,
+        Textbox, text!, Checkbox
 
 include("graph_construction.jl")
 include("ui.jl")
