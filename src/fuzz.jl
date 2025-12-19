@@ -54,8 +54,12 @@ function fuzz(G::FuzzedGraph, mlg, all_links, links, scores, oweights, dweights,
 
                 # if the net dist is actually say 1000.25m, we want to consider not greater than 1000m,
                 # because distances all get rounded inside the missinglinks tool.
-                if round(UInt16, min(net_dist, typemax(UInt16))) > MIN_NET_DIST
+                # because of rounding of offsets, the ends of the links may move a little before network distance
+                # calculations, so allow a 1-meter buffer
+                if round(UInt16, min(net_dist, typemax(UInt16))) > MIN_NET_DIST + 1
                     found_this_link = false
+                    best_link = nothing
+                    best_link_dist = Inf64
 
                     # if these two lines cross more than once, all bets are off - depending on whether any geometries got reversed,
                     # we might find a different one, and which one we find is undefined behavior. This is rare, so just punt in
@@ -70,40 +74,66 @@ function fuzz(G::FuzzedGraph, mlg, all_links, links, scores, oweights, dweights,
                     # TODO no shared IDs here what to do
                     for (i, link) in enumerate(all_links)
                         link_geom = map(pt -> round.(pt), get_xy(links_to_gis(mlg, [link]).geometry[1]))
+                        geomdiff = abs.(Iterators.flatten(link_geom) .- [LibGEOS.getGeomX(pt_e1), LibGEOS.getGeomY(pt_e1), LibGEOS.getGeomX(pt_e2), LibGEOS.getGeomY(pt_e2)])
 
-                        if (
-                           (abs(link.fr_dist_from_start - round(UInt16, pos_e1)) <= 2 && abs(link.fr_dist_to_end - (round(UInt16, len_e1) - round(UInt16, pos_e1))) <= 2 ) ||
-                           # link could have been reversed
-                           (abs(link.fr_dist_to_end - round(UInt16, pos_e1)) <= 2 && abs(link.fr_dist_from_start - (round(UInt16, len_e1) - round(UInt16, pos_e1))) <= 2 )
-                        ) && (
-                            (abs(link.to_dist_from_start - round(UInt16, pos_e2)) <= 2 && abs(link.to_dist_to_end - (round(UInt16, len_e2) - round(UInt16, pos_e2))) <= 2 ) ||
-                            # link could have been reversed
-                            (abs(link.to_dist_to_end - round(UInt16, pos_e2)) <= 2 && abs(link.to_dist_from_start - (round(UInt16, len_e2) - round(UInt16, pos_e2))) <= 2 )
-                        ) &&
-                        abs(link.geographic_length_m - round(UInt16, geog_dist) <= 2) &&
+                        fromdiff = min(
+                                max(
+                                    abs(link.fr_dist_from_start - round(UInt16, pos_e1)) <= 2,
+                                    abs(link.fr_dist_to_end - (round(UInt16, len_e1) - round(UInt16, pos_e1))) <= 2
+                                ), max(
+                                    # edge could have been reversed
+                                    abs(link.fr_dist_to_end - round(UInt16, pos_e1)) <= 2,
+                                    abs(link.fr_dist_from_start - (round(UInt16, len_e1) - round(UInt16, pos_e1))) <= 2
+                                )
+                        )
 
+                        todiff = min(
+                                max(
+                                    abs(link.to_dist_from_start - round(UInt16, pos_e2)),
+                                    abs(link.to_dist_to_end - (round(UInt16, len_e2) - round(UInt16, pos_e2)))
+                                ), max(
+                                    # edge could have been reversed
+                                    abs(link.to_dist_to_end - round(UInt16, pos_e2)),
+                                    abs(link.to_dist_from_start - (round(UInt16, len_e2) - round(UInt16, pos_e2)))
+                                )
+                        )
+
+                        geogdiff = abs(link.geographic_length_m - round(UInt16, geog_dist))
+
+                        this_link_diff = sum([geomdiff..., fromdiff, todiff, geogdiff]) 
+
+                        if fromdiff <= 2 && todiff <= 2 && geogdiff <= 2 &&
                         # checking the geometry
-                        all(abs.(
-                            Iterators.flatten(link_geom) .-
-                            [LibGEOS.getGeomX(pt_e1), LibGEOS.getGeomY(pt_e1), LibGEOS.getGeomX(pt_e2), LibGEOS.getGeomY(pt_e2)]
-                         ) .< 4) &&
-                            !found_links[i]
-                            found_links[i] = true
-                            found_this_link = true
-                            break
+                        all(abs.(geomdiff) .< 4) &&
+                        !found_links[i] &&
+                        this_link_diff < best_link_dist
+                            # this link matches, but see if there is one that matches better before calling it a match,
+                            # so we don't accidentally match things we shouldn't
+                            best_link = i
+                            best_link_dist = this_link_diff
+                            found_this_link = true # we found a link that could be this link anyways, and if there isn't one closer it must be it
                         end
                     end
 
-                    if !found_this_link
-                        # this can happen when links have multiple points at the same distance (most often when they cross
-                        # each other twice). If one of them got reversed in graph build the point found may be the same length but
-                        # different location.
+                    if found_this_link
+                        found_links[best_link] = true
+                    else
                         @warn "Link from $pt_e1 @ $pos_e1 / $len_e1 to $pt_e2 @ $pos_e2 / $len_e2 with length $geog_dist (network $net_dist) not found, seed $(G.settings.seed)"
                     end
                 end
             end
         end
     end
+
+    for (i, link) in enumerate(all_links)
+        if link.network_length_m <= MIN_NET_DIST + 1
+            # if very close to 1km we might think we should have it but not have it due to rounding,
+            # so just say we found it regardless
+            found_links[i] = true
+        end
+    end
+
+
 
     if sum(.!found_links) ≠ expected_not_found
         @warn "$(sum(.!found_links) - expected_not_found) / $(length(found_links)) found but not expected, seed $(G.settings.seed):" get_xy.(links_to_gis(mlg, all_links[.!found_links]).geometry)
