@@ -301,7 +301,8 @@ function _fuzzer(rng, settings, seed, csvfile, once, headless)
             local all_links, links, oweights_exp, dweights_exp, scores, G
 
             with_logger(NullLogger()) do
-                G = graph_from_gdal(fuzzed.edges, max_edge_length=100_000)
+                # combine_geometries makes some randomly into MultiLineStrings to ensure they are properly split.
+                G = graph_from_gdal(combine_geometries(fuzzed.edges), max_edge_length=100_000)
                 #G = remove_tiny_islands(G, 4) # TODO test this
 
                 dmat = zeros(Float64, (nv(G), nv(G)))

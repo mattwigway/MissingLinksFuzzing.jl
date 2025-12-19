@@ -28,6 +28,7 @@ include("ui.jl")
 include("visualizer.jl")
 include("fuzz.jl")
 include("progressheadless.jl")
+include("combine_geoms.jl")
 
 export FuzzedGraphSettings, build_fuzzed_graph
 end
