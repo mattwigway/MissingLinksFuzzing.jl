@@ -34,21 +34,58 @@ function visualizer()
     ruler_p2 = Observable{Union{Point2f, Nothing}}(nothing)
     cursorpos = Observable(Point2f(0, 0))
 
+    linkinfo = Observable("")
+
     on(events(fig).mousebutton) do event
         if event.button == Mouse.left && event.action == Mouse.press
-            if !isnothing(ruler_p1[]) && isnothing(ruler_p2[])
-                # finishing a measurement
-                ruler_p2[] = mouseposition(ax.scene)
+            io = IOBuffer()
+
+            if (Keyboard.left_shift == events(fig).keyboardbutton[].key || Keyboard.right_shift == events(fig).keyboardbutton[].key) &&
+                    events(fig).keyboardbutton[].action == Keyboard.press
+                # link identification
+                clickpos = AG.createpoint(collect(mouseposition(ax.scene).data)) # in data coordinates
+
+                linkinfos = String[]
+                linkdists = []
+                
+                for link in eachrow(state[].all_links)
+                    candidate_dist = AG.distance(link.geometry, clickpos)
+                    if candidate_dist < 10
+                        push!(linkinfos, """
+                            Link @ $(round(candidate_dist, digits=2)):
+                                Length:
+                                    Geographic: $(link.geographic_length_m)m
+                                    Network: $(link.network_length_m)m
+                                From edge:
+                                    From start: $(link.fr_dist_from_start)m
+                                    To end: $(link.fr_dist_to_end)m
+                                To edge:
+                                    From start: $(link.to_dist_from_start)m
+                                    To end: $(link.to_dist_to_end)m
+                                """)
+                        push!(linkdists, candidate_dist)
+                    end
+                end
+
+                linkinfo[] = join(linkinfos[sortperm(linkdists)][1:min(2, length(linkinfos))], "\n")
             else
-                # starting a new measurement
-                ruler_p1[] = mouseposition(ax.scene)
-                ruler_p2[] = nothing
+                # distance measurement
+                if !isnothing(ruler_p1[]) && isnothing(ruler_p2[])
+                    # finishing a measurement
+                    ruler_p2[] = mouseposition(ax.scene)
+                else
+                    # starting a new measurement
+                    ruler_p1[] = mouseposition(ax.scene)
+                    ruler_p2[] = nothing
+                end
             end
         end
     end
 
     on(events(fig).mouseposition) do _
-        cursorpos[] = mouseposition(ax.scene)
+        if is_mouseinside(ax.scene)
+            cursorpos[] = mouseposition(ax.scene)
+        end
     end
 
     sg = SliderGrid(
@@ -89,6 +126,7 @@ function visualizer()
     seedbox = Textbox(iface[5, 1], placeholder = "Set seed...", width=290, validator = UInt64)
 
     on(seedbox.stored_string) do s
+        linkinfo[] = ""
         state[] = next_state(FuzzedGraphSettings(intersection_density = sg.sliders[1].value[] / (1000^2)), parse(UInt64, s))
     end
 
@@ -96,11 +134,20 @@ function visualizer()
 
     on(nextbutton.clicks) do _
         @debug("New state with seed $(seedval[1])")
+        linkinfo[] = ""
         state[] = next_state(FuzzedGraphSettings(intersection_density = sg.sliders[1].value[] / (1000^2)))
     end
 
     poslabel = @lift("Coordinate: $(round($cursorpos[1], digits=2)), $(round($cursorpos[2], digits=2))")
     Label(iface[7, 1], poslabel)
+
+    Label(iface[8, 1], linkinfo, justification=:left)
+
+    Label(iface[10, 1], """
+        Usage
+        Click two points to measure
+        Shift-click to see link info for links within 10m
+        """, justification=:left)
 
     # because display() uses GLMakie, and we loaded GLMakie at runtime with eval() so that it is only
     # loaded if the interactive visualizer is requested, we need to use invokelatest so that it is
@@ -128,7 +175,13 @@ function next_state(settings=FuzzedGraphSettings(), seed=nothing)
 
     VisualizerState(
         fuzzed,
-        isempty(all_links) ? DataFrame(geometry=[]) : links_to_gis(G, all_links),
+        isempty(all_links) ? DataFrame(geometry=[]) : links_to_gis(G, all_links,
+            :fr_dist_from_start => map(l -> l.fr_dist_from_start, all_links),
+            :fr_dist_to_end => map(l -> l.fr_dist_to_end, all_links),
+            :to_dist_from_start => map(l -> l.to_dist_from_start, all_links),
+            :to_dist_to_end => map(l -> l.to_dist_to_end, all_links),
+            :geographic_length_m => map(l -> l.geographic_length_m, all_links)
+        ),
         isempty(all_links) ? DataFrame(geometry=[]) : links_to_gis(G, links)
     )
 end

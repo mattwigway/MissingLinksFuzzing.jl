@@ -21,7 +21,7 @@ import ProgressMeter: ProgressUnknown, next!
 import ProgressMeter
 import Makie: Figure, lines!, scatter!, Observable, Figure, Axis, @lift, GridLayout, Button, on, Label,
         Slider, SliderGrid, colsize!, rowsize!, Fixed, Auto, Relative, events, Mouse, mouseposition, Point2f, limits!,
-        Textbox, text!, Checkbox
+        Textbox, text!, Checkbox, is_mouseinside, Keyboard
 
 include("graph_construction.jl")
 include("ui.jl")
