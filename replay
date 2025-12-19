@@ -1,0 +1,8 @@
+#!/bin/bash
+
+# Replay the problematic seeds from a logfile
+set -e
+
+LOGFILE="$1"
+
+sed -nE "s/.*seed ([0-9]+).*/\1/p" "$LOGFILE" | uniq | xargs -r -n 1 ./fuzz --once --seed
