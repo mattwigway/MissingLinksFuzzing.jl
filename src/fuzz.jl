@@ -438,7 +438,7 @@ function get_weights(rng, fuzzed, G, poly)
         pos = G[label_for(G, i)]
         found = false
         for (j, x, y) in zip(1:length(fuzzed.x), fuzzed.x, fuzzed.y)
-            if norm2([x, y] .- pos) < 1e-5
+            if norm2([x, y] .- pos) < 1e-3
                 found = true
                 @assert !isnan(weights_fuzzed[j])
                 weights_mlg[i] = weights_fuzzed[j]
@@ -447,7 +447,7 @@ function get_weights(rng, fuzzed, G, poly)
                 break
             end
         end
-        @assert found
+        @assert found "$pos not found in weights"
     end
 
     @assert sum(weights_mlg) ≈ total_expected_weight
