@@ -76,37 +76,41 @@ function fuzz(G::FuzzedGraph, mlg, all_links, links, scores, oweights, dweights,
                         link_geom = map(pt -> round.(pt), get_xy(links_to_gis(mlg, [link]).geometry[1]))
                         geomdiff = abs.(Iterators.flatten(link_geom) .- [LibGEOS.getGeomX(pt_e1), LibGEOS.getGeomY(pt_e1), LibGEOS.getGeomX(pt_e2), LibGEOS.getGeomY(pt_e2)])
 
+
+                        # all the convert(Int64, ...) s here are to prevent underflow when the difference is negative
+
                         fromdiff = min(
                                 max(
-                                    abs(link.fr_dist_from_start - round(UInt16, pos_e1)) <= 2,
-                                    abs(link.fr_dist_to_end - (round(UInt16, len_e1) - round(UInt16, pos_e1))) <= 2
+                                    abs(convert(Int64, link.fr_dist_from_start) - round(UInt16, pos_e1)),
+                                    abs(convert(Int64, link.fr_dist_to_end) - (round(UInt16, len_e1) - round(UInt16, pos_e1)))
                                 ), max(
                                     # edge could have been reversed
-                                    abs(link.fr_dist_to_end - round(UInt16, pos_e1)) <= 2,
-                                    abs(link.fr_dist_from_start - (round(UInt16, len_e1) - round(UInt16, pos_e1))) <= 2
+                                    abs(convert(Int64, link.fr_dist_to_end) - round(UInt16, pos_e1)),
+                                    abs(convert(Int64, link.fr_dist_from_start) - (round(UInt16, len_e1) - round(UInt16, pos_e1)))
                                 )
                         )
 
                         todiff = min(
                                 max(
-                                    abs(link.to_dist_from_start - round(UInt16, pos_e2)),
-                                    abs(link.to_dist_to_end - (round(UInt16, len_e2) - round(UInt16, pos_e2)))
+                                    abs(convert(Int64, link.to_dist_from_start) - round(UInt16, pos_e2)),
+                                    abs(convert(Int64, link.to_dist_to_end) - (round(UInt16, len_e2) - round(UInt16, pos_e2)))
                                 ), max(
                                     # edge could have been reversed
-                                    abs(link.to_dist_to_end - round(UInt16, pos_e2)),
-                                    abs(link.to_dist_from_start - (round(UInt16, len_e2) - round(UInt16, pos_e2)))
+                                    abs(convert(Int64, link.to_dist_to_end) - round(UInt16, pos_e2)),
+                                    abs(convert(Int64, link.to_dist_from_start) - (round(UInt16, len_e2) - round(UInt16, pos_e2)))
                                 )
                         )
 
-                        geogdiff = abs(link.geographic_length_m - round(UInt16, geog_dist))
+                        geogdiff = abs(convert(Int64, link.geographic_length_m) - round(UInt16, min(geog_dist, typemax(UInt16))))
 
                         this_link_diff = sum([geomdiff..., fromdiff, todiff, geogdiff]) 
 
-                        if fromdiff <= 2 && todiff <= 2 && geogdiff <= 2 &&
+                        if fromdiff <= 4 && todiff <= 4 && geogdiff <= 4 &&
                         # checking the geometry
                         all(abs.(geomdiff) .< 4) &&
                         !found_links[i] &&
                         this_link_diff < best_link_dist
+
                             # this link matches, but see if there is one that matches better before calling it a match,
                             # so we don't accidentally match things we shouldn't
                             best_link = i
@@ -305,7 +309,7 @@ function _fuzzer(rng, settings, seed, csvfile, once, headless)
                 G = graph_from_gdal(combine_geometries(fuzzed.edges), max_edge_length=100_000)
                 #G = remove_tiny_islands(G, 4) # TODO test this
 
-                dmat = zeros(Float64, (nv(G), nv(G)))
+                dmat = zeros(UInt16, (nv(G), nv(G)))
                 fill_distance_matrix!(G, dmat; maxdist=1000)
 
                 all_links = identify_potential_missing_links(G, dmat, 100, 1000)
