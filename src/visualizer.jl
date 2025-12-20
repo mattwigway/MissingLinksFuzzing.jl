@@ -197,10 +197,10 @@ function next_state(settings=FuzzedGraphSettings(), seed=nothing)
     settings.seed = isnothing(seed) ? rand(UInt64) : seed
     fuzzed = build_fuzzed_graph(settings)
 
-    G = graph_from_gdal(fuzzed.edges, max_edge_length=100_000)
+    G = graph_from_gdal(combine_geometries(fuzzed.edges), max_edge_length=100_000)
     #G = remove_tiny_islands(G, 4)
 
-    dmat = zeros(Float64, (nv(G), nv(G)))
+    dmat = zeros(UInt16, (nv(G), nv(G)))
     fill_distance_matrix!(G, dmat; maxdist=1000)
 
     all_links = identify_potential_missing_links(G, dmat, 100, 1000)
