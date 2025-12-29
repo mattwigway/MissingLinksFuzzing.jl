@@ -8,7 +8,16 @@ function combine_geometries(ps::Vector{AG.IGeometry{AG.wkbLineString}})
         g1 = pop!(ps)
         g2idx = min(i * 5, length(ps))
         g2 = ps[g2idx]
-        ps[g2idx] = AG.union(g1, g2)
+        if !AG.intersects(g1, g2)
+            # if they intersect, ArchGDAL will create a node where they cross,
+            # which will affect at the very least weight calculation since there
+            # will be nodes that are not expected. So if they cross, just don't
+            # merge them
+            ps[g2idx] = AG.union(g1, g2)
+        else
+            # just put things back how they were if they cross
+            push!(ps, g1)
+        end
     end
     
     return ps
