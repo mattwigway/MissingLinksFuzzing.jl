@@ -154,33 +154,11 @@ function fuzz(G::FuzzedGraph, mlg, all_links, links, scores, oweights, dweights,
 
         # Note that it is expected that this will introduce a _very slight_ negative bias to the results. Julia
         # uses round halves to evens (bankers rounding), so in general rounding does not introduce any systematic
-        # bias. However, in this case it results in the distances being (on average) marginally longer in the
-        # realized graph than as calculated by the MissingLinks algorithm. I say on average because this small
-        # bias is far smaller than the overall rounding error that could be positive or negative.
-
-        # Several things are getting rounded in the algorithm - the distance matrix values, the link offsets
-        # from the start and end of the link, and the length of the link itself. All of these use default rounding,
-        # so none of them are biased. However, consider a path from point A to B via link L. The MissingLinks algorithm
-        # calculates this as the distance from A to the end of the edge L connects to (it could be either end, it calculates
-        # which is shortest), the distance from the end of L to where L connects, the length of L itself, the distance from
-        # where L connect to the end of the other edge it is connected to, and the distance from the end of that edge to the
-        # destination. These are all rounded independently. For the most part, all of that rounding should cancel out on average,
-        # leading to unbiased results. There is one exception, however. When we round the offsets from the ends of the edges to L,
-        # we may make the distance to get to L further from or closer to the origin/destination, with no bias (and the
-        # algorithm ensures that the total of the offsets from each edge sum to the link length). However, rounding
-        # these offsets _does_ bias the length of L itself very slightly. Since L is always at the closest point between
-        # the edges, rounding the offsets will always make it longer, because moving in either direction moves away from the
-        # optimal point, introducing up to 1m in additional length (if the true offsets were both x.5, the links were colinear,
-        # and rounding moved the ends farther apart). The MissingLinks algorithm doesn't account for this; it treats the length
-        # of the link as the geographic distance at the shortest point, rounded. 
-        
-        # TODO this is not correct, we use the geographic length, but the bias might be due to duplicate links.
-        # But when we realize the graph,
-        # the actual length from the rounded point is used. So the links in the realized graph are ever-so-slightly longer
-        # leading to longer distances and lower access on average. The magnitude of this bias is so tiny it falls several orders
-        # of magnitudes below many other sources of error in the algorithm, so really not worth worrying about - and in fact makes
-        # the result probably better, as the shortest point between two edges is unlikely to be a place you could exactly build
-        # a connection anyways. But it is statistically significant in large samples.
+        # bias. However, in this case it appears that distances are marginally longer in the realized graph than
+        # the base graph. I think this is because of how the rounding is used - because each end of the link can
+        # be accessed from either side, in the missing links tool there is more rounding, and the minimum distance
+        # is chosen. That makes it marginally more likely that we will see rounding down rather than up, because
+        # of taking the minimum.
         if !isnothing(logfile)
             println(logfile, "$(G.settings.seed),$score,$new_score,$(new_score - score),\"$(AG.toWKT(geom))\"")
         elseif score ≠ new_score && (score > 0 && abs(new_score / score - 1) > 0.05)
