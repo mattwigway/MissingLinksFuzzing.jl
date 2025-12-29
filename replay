@@ -5,4 +5,4 @@ set -e
 
 LOGFILE="$1"
 
-sed -nE "s/.*seed ([0-9]+).*/\1/p" "$LOGFILE" | uniq | xargs -r -n 1 ./fuzz --once --seed
+sed -nE "s/.*seed ([0-9]+).*/\1/p" "$LOGFILE" | uniq | xargs -r -n 1 -P 4 ./fuzz --once --log /dev/null --seed
