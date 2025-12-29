@@ -46,17 +46,13 @@ function fuzz(G::FuzzedGraph, mlg, all_links, links, scores, oweights, dweights,
                 pos_e2 = round(UInt16, LibGEOS.project(e2.geometry, pt_e2))
 
                 net_dist = min(
-                    pos_e1 + dmat[e1.src, e2.src] + pos_e2,
-                    pos_e1 + dmat[e1.src, e2.dst] + (len_e2 - pos_e2),
-                    (len_e1 - pos_e1) + dmat[e1.dst, e2.src] + pos_e2,
-                    (len_e1 - pos_e1) + dmat[e1.dst, e2.dst] + (len_e2 - pos_e2)
+                    pos_e1 + round(dmat[e1.src, e2.src]) + pos_e2,
+                    pos_e1 + round(dmat[e1.src, e2.dst]) + (len_e2 - pos_e2),
+                    (len_e1 - pos_e1) + round(dmat[e1.dst, e2.src]) + pos_e2,
+                    (len_e1 - pos_e1) + round(dmat[e1.dst, e2.dst]) + (len_e2 - pos_e2)
                 )
 
-                # if the net dist is actually say 1000.25m, we want to consider not greater than 1000m,
-                # because distances all get rounded inside the missinglinks tool.
-                # because of rounding of offsets, the ends of the links may move a little before network distance
-                # calculations, so allow a 1-meter buffer
-                if round(UInt16, min(net_dist, typemax(UInt16))) > MIN_NET_DIST + 1
+                if round(UInt16, min(net_dist, typemax(UInt16))) > MIN_NET_DIST
                     found_this_link = false
                     best_link = nothing
                     best_link_dist = Inf64
@@ -178,7 +174,7 @@ function fuzz(G::FuzzedGraph, mlg, all_links, links, scores, oweights, dweights,
         # and rounding moved the ends farther apart). The MissingLinks algorithm doesn't account for this; it treats the length
         # of the link as the geographic distance at the shortest point, rounded. 
         
-        # TODO this is not correct, but the bias might be due to duplicate links.
+        # TODO this is not correct, we use the geographic length, but the bias might be due to duplicate links.
         # But when we realize the graph,
         # the actual length from the rounded point is used. So the links in the realized graph are ever-so-slightly longer
         # leading to longer distances and lower access on average. The magnitude of this bias is so tiny it falls several orders
