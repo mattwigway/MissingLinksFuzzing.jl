@@ -306,7 +306,8 @@ function _fuzzer(rng, settings, seed, csvfile, once, headless)
                 #G = remove_tiny_islands(G, 4) # TODO test this
 
                 dmat = zeros(UInt16, (nv(G), nv(G)))
-                fill_distance_matrix!(G, dmat; maxdist=1000)
+                # We set maxdist to 1001, so that e.g. 1000.25 will get rounded to 1000 rather than infinity
+                fill_distance_matrix!(G, dmat; maxdist=1001)
 
                 all_links = identify_potential_missing_links(G, dmat, 100, 1000)
                 links = deduplicate_links(G, all_links, dmat, 100)
